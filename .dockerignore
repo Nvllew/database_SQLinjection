@@ -1,0 +1,14 @@
+.git
+.gitignore
+.DS_Store
+node_modules
+npm-debug.log*
+pnpm-debug.log*
+.env
+.env.*
+dist
+build
+.cache
+.npm
+.pnpm-store
+coverage

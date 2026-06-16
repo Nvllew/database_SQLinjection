@@ -78,7 +78,7 @@ Las siguientes prácticas constituyen las medidas fundamentales para prevenir y 
 
 ---
 
-### Consultas Preparadas (*Parameterized Queries*): El Estándar de Oro
+### Consultas Preparadas (*Parameterized Queries*)
 
 Las consultas preparadas representan el mecanismo más eficaz y ampliamente recomendado para prevenir la inyección SQL. Su funcionamiento se basa en una separación estricta entre la lógica de la consulta y los datos proporcionados por el usuario.
 
@@ -196,11 +196,339 @@ Sin embargo, las consultas nativas (*Raw SQL Queries*) deben emplearse con preca
 
 
 
-## Prevención en Backends Modernos
+**Prevención de SQL Injection en Backends Modernos**
+
+En el desarrollo de software contemporáneo, la prevención de la inyección SQL ha dejado de depender exclusivamente de la disciplina del desarrollador al momento de escribir consultas individuales. Los *backends* modernos incorporan mecanismos de protección desde su diseño, apoyándose en herramientas de abstracción, arquitecturas desacopladas y controles de infraestructura que reducen significativamente la superficie de ataque.
+
+La seguridad, por tanto, se concibe como una responsabilidad transversal que abarca desde la validación de las entradas hasta la configuración del entorno de despliegue.
+
+---
+
+### Uso de ORMs y Constructores de Consultas (*Query Builders*)
+
+En la actualidad, el desarrollo de aplicaciones empresariales en entornos como Node.js, Python o Java se apoya ampliamente en el uso de Mapeadores Objeto-Relacionales (*Object-Relational Mappers, ORM*) y *Query Builders*, entre los que destacan Prisma, Sequelize, SQLAlchemy y TypeORM.
+
+Estas herramientas abstraen la interacción con el motor de base de datos y permiten manipular los registros mediante objetos y métodos propios del lenguaje de programación, reduciendo la necesidad de escribir instrucciones SQL manualmente.
+
+**Ventajas de seguridad**
+
+- Generan consultas parametrizadas de forma automática.
+- Evitan la construcción de sentencias mediante concatenación de cadenas.
+- Reducen la probabilidad de introducir errores de programación asociados a SQL Injection.
+- Favorecen la estandarización del acceso a los datos.
+
+**Riesgo residual**
+
+La mayoría de las vulnerabilidades de inyección SQL en aplicaciones modernas surgen cuando se omiten los mecanismos del ORM y se ejecutan consultas nativas (*Raw SQL Queries*) por razones de rendimiento, complejidad o flexibilidad. En estos escenarios, la responsabilidad de parametrizar adecuadamente las entradas vuelve a recaer directamente en el desarrollador.
+
+---
+
+### Arquitectura por Capas y Validación Centralizada
+
+Los sistemas empresariales complejos, como plataformas *multi-tenant*, sistemas ERP o aplicaciones de Punto de Venta (POS), requieren un manejo estricto y consistente de los datos de entrada. Este objetivo se alcanza mediante arquitecturas desacopladas, tales como MVC, Arquitectura Hexagonal o Arquitectura Limpia (*Clean Architecture*), donde cada componente posee responsabilidades claramente definidas.
+
+**Validación en la frontera de la aplicación**
+
+Antes de alcanzar la lógica de negocio o la capa de persistencia, las solicitudes atraviesan mecanismos de validación centralizada implementados mediante *middlewares* o esquemas de validación.
+
+Herramientas como:
+
+- Zod
+- Joi
+- Pydantic
+
+permiten definir reglas estrictas sobre el formato y tipo de los datos esperados.
+
+Por ejemplo, si un servicio requiere el identificador numérico de una categoría, el esquema de validación puede exigir explícitamente un número entero. Si la entrada contiene expresiones SQL o datos incompatibles con el tipo esperado, la petición es rechazada inmediatamente, generalmente mediante una respuesta HTTP `400 Bad Request`.
+
+**Aislamiento de la capa de acceso a datos**
+
+La capa encargada de interactuar con la base de datos debe permanecer completamente desacoplada de las peticiones HTTP.
+
+En una implementación adecuada:
+
+1. La petición es recibida por el controlador.
+2. Los datos son validados y transformados.
+3. Solo la información previamente verificada se envía al repositorio.
+
+Como consecuencia, el repositorio nunca procesa entradas sin validar ni objetos HTTP crudos, disminuyendo significativamente el riesgo de que datos maliciosos alcancen las consultas de la base de datos.
+
+---
+
+### Seguridad en la Infraestructura y Entornos Contenerizados
+
+La contenerización mediante tecnologías como Docker no elimina las vulnerabilidades presentes en el código fuente; sin embargo, proporciona mecanismos de aislamiento que limitan considerablemente el impacto de un posible compromiso de seguridad.
+
+**Aislamiento de red**
+
+En un despliegue correctamente configurado, el contenedor de la base de datos no expone sus puertos directamente hacia el exterior. La comunicación se restringe exclusivamente a los servicios autorizados mediante redes virtuales internas.
+
+Bajo este esquema:
+
+- El cliente se comunica únicamente con la API.
+- La API se comunica con la base de datos.
+- La base de datos permanece inaccesible desde Internet.
+
+Esta segmentación reduce la exposición de los servicios críticos y dificulta la explotación directa de la infraestructura.
+
+**Gestión segura de credenciales**
+
+Las credenciales de acceso a la base de datos no deben almacenarse dentro del código fuente ni incorporarse de forma estática en el repositorio del proyecto.
+
+Las aplicaciones modernas utilizan mecanismos de configuración externa, tales como:
+
+- Variables de entorno (`.env`)
+- Sistemas de gestión de secretos (*Secrets Management*)
+- Servicios de configuración centralizada
+
+Este enfoque permite administrar credenciales con privilegios limitados y evita la exposición accidental de información sensible durante el desarrollo, la distribución del código o el despliegue de la aplicación.
+
+---
+
+> **Idea clave:** La prevención de SQL Injection en *backends* modernos no depende de un único mecanismo de seguridad. La combinación de ORMs con consultas parametrizadas, arquitecturas desacopladas con validación centralizada y configuraciones de infraestructura seguras constituye un enfoque integral de defensa en profundidad que reduce la probabilidad de explotación y limita el impacto de un eventual incidente de seguridad.
+
 
 
 # Análisis e Implementación en el Proyecto Scynara
 
 ## Arquitectura y Configuración del Entorno 
 
+El backend de Scynara está construido con **Node.js**, **Express** y **MySQL**. Su organización sigue una separación por capas que facilita ubicar dónde entra la petición, dónde se valida y dónde finalmente se ejecutan las consultas SQL:
+
+- `src/routes/`: define los endpoints HTTP disponibles.
+- `src/controllers/`: recibe la petición y delega la operación al servicio correspondiente.
+- `src/services/`: aplica reglas de negocio, validaciones con Zod y control de errores.
+- `src/models/`: concentra las consultas hacia MySQL usando `mysql2/promise`.
+- `src/middlewares/`: contiene validación de JWT, roles, rate limiting y manejo global de errores.
+- `src/config/`: centraliza la lectura de variables de entorno y la conexión a la base de datos.
+
+Esta arquitectura ayuda a prevenir SQL Injection porque las entradas del usuario no se envían directamente desde el controlador a la base de datos. Antes pasan por esquemas de validación y después llegan a consultas parametrizadas.
+
+Un ejemplo representativo se observa en el inicio de sesión. El flujo inicia en `POST /auth/login`, pasa por `loginUser`, valida el formato del correo y contraseña con `loginSchema`, y finalmente busca el usuario mediante una consulta parametrizada:
+
+```javascript
+const [rows] = await pool.query(
+  `SELECT * FROM Usuarios WHERE correo = ? LIMIT 1`,
+  [email]
+);
+```
+
+El signo `?` funciona como marcador de posición. El valor de `email` se envía separado de la sentencia SQL, por lo que una entrada como `' OR '1'='1` no modifica la lógica del `WHERE`; se interpreta como texto.
+
+En los módulos de productos, clientes, proveedores, ventas y usuarios se repite el mismo patrón de protección:
+
+```javascript
+await pool.query(
+  'DELETE FROM Productos WHERE id_producto = ? AND id_tienda = ?',
+  [id, tiendaId]
+);
+```
+
+Además de parametrizar consultas, el proyecto usa **Zod** para controlar tipos, longitudes, formatos y valores permitidos. Por ejemplo, el esquema de productos exige que identificadores como `id_tienda`, `id_proveedor` e `id_categoria` sean números enteros positivos; de esta forma, payloads SQL enviados en campos numéricos son rechazados antes de llegar a MySQL.
+
+El archivo `src/middlewares/error.middleware.js` también contribuye a la seguridad. En producción devuelve un mensaje genérico de error interno, evitando exponer detalles de consultas, stack traces o información del motor de base de datos al cliente.
+
+### Ejecución con Docker
+
+El backend puede ejecutarse en contenedores usando Docker Compose. La configuración incluye dos servicios:
+
+- `api`: aplicación Node.js/Express expuesta en `http://localhost:3000`.
+- `mysql`: base de datos MySQL 8.4 disponible únicamente dentro de la red interna de Docker.
+
+Para levantar el proyecto:
+
+```bash
+cp .env.example .env
+docker compose up --build
+```
+
+El contenedor de la API toma las variables de entorno desde `.env`. Como mínimo se requiere definir `JWT_SECRET`, `DB_USER`, `DB_PASSWORD` y `DB_NAME`; el archivo `.env.example` incluye valores de desarrollo para arrancar rápidamente.
+
+Si se cuenta con un dump o script de creación de tablas, debe colocarse en `docker/mysql/init/` con extensión `.sql`. MySQL lo ejecutará automáticamente la primera vez que se cree el volumen `mysql_data`.
+
+Comandos útiles:
+
+```bash
+docker compose ps
+docker compose logs -f api
+docker compose down
+docker compose down -v
+```
+
+> `docker compose down -v` elimina también el volumen de MySQL, por lo que borra los datos almacenados en la base.
+
 ## Herramientas de Validación y Pruebas
+
+Las pruebas de SQL Injection deben realizarse únicamente en el entorno local o en un ambiente autorizado. El objetivo de estas pruebas es comprobar que los controles implementados en el backend impiden alterar las consultas SQL mediante entradas maliciosas.
+
+Para validar el proyecto se pueden utilizar:
+
+- **Postman** o **Thunder Client** para enviar peticiones HTTP.
+- **Docker Compose** para levantar la API y MySQL de forma aislada.
+- **Logs de Docker** para observar errores controlados sin exponerlos al cliente.
+- **MySQL Workbench**, DBeaver o la consola de MySQL para revisar que los datos no fueron modificados indebidamente.
+
+### Preparación del entorno de pruebas
+
+Primero se levanta el backend y la base de datos:
+
+```bash
+cp .env.example .env
+docker compose up --build
+```
+
+Después se verifica que la API responda:
+
+```http
+GET http://localhost:3000/
+```
+
+Respuesta esperada:
+
+```json
+{
+  "status": "API funcionando 🚀"
+}
+```
+
+### Prueba 1: intento de evasión en login
+
+El login es uno de los puntos clásicos para probar SQL Injection, ya que un ataque común intenta convertir la condición de autenticación en verdadera.
+
+Solicitud:
+
+```http
+POST http://localhost:3000/auth/login
+Content-Type: application/json
+```
+
+Cuerpo malicioso:
+
+```json
+{
+  "email": "' OR '1'='1' --",
+  "password": "cualquier-cosa"
+}
+```
+
+Resultado esperado:
+
+- La petición debe fallar con código `400` o `401`.
+- No debe generarse un token JWT.
+- No debe iniciarse sesión con ningún usuario.
+
+Esto ocurre porque el campo `email` es validado por Zod como correo electrónico. Al no cumplir el formato esperado, la petición se rechaza antes de consultar la base de datos.
+
+### Prueba 2: inyección en correo con formato aparentemente válido
+
+También se puede probar una variante que incluye texto malicioso dentro de un valor que intenta parecer correo:
+
+```json
+{
+  "email": "admin@scynara.com' OR '1'='1",
+  "password": "cualquier-cosa"
+}
+```
+
+Resultado esperado:
+
+- La autenticación debe fallar.
+- La consulta no debe devolver usuarios adicionales.
+- El backend debe tratar todo el contenido del correo como un valor, no como parte de la sentencia SQL.
+
+La protección principal en este caso es la consulta parametrizada:
+
+```sql
+SELECT * FROM Usuarios WHERE correo = ? LIMIT 1
+```
+
+El payload completo se compara contra la columna `correo`; no se concatena dentro del SQL.
+
+### Prueba 3: inyección en parámetros de rutas protegidas
+
+En endpoints como productos, clientes o proveedores, un atacante podría intentar manipular el parámetro `id`.
+
+Solicitud de ejemplo:
+
+```http
+GET http://localhost:3000/products/1 OR 1=1
+Authorization: Bearer <TOKEN_VALIDO>
+```
+
+Resultado esperado:
+
+- La API no debe devolver todos los productos.
+- La operación debe fallar o devolver un resultado vacío.
+- No debe ejecutarse una consulta alterada por el parámetro.
+
+En el modelo de productos, el identificador se envía como parámetro:
+
+```javascript
+WHERE p.id_producto = ? AND p.id_tienda = ?
+```
+
+Aunque el usuario modifique la URL, el valor recibido no se inserta como SQL ejecutable.
+
+### Prueba 4: intento destructivo en un campo de texto
+
+En formularios de creación o edición se puede probar una carga destructiva para confirmar que se almacena o rechaza como texto, pero no se ejecuta como instrucción SQL.
+
+Ejemplo en nombre de producto:
+
+```json
+{
+  "id_tienda": 1,
+  "nombre": "Producto prueba'); DROP TABLE Productos; --",
+  "cantidad": 10,
+  "precio_caja": 100,
+  "precio_unitario": 10
+}
+```
+
+Resultado esperado:
+
+- La tabla `Productos` no debe eliminarse.
+- La aplicación no debe ejecutar `DROP TABLE`.
+- Si el dato cumple las reglas del esquema, se tratará como texto; si no las cumple, será rechazado con error de validación.
+
+### Prueba 5: validación de tipos en campos numéricos
+
+Los campos numéricos son especialmente importantes porque suelen usarse en filtros, identificadores y relaciones.
+
+Ejemplo:
+
+```json
+{
+  "id_tienda": "1 OR 1=1",
+  "nombre": "Caja de prueba",
+  "cantidad": "10; DROP TABLE Productos;",
+  "precio_caja": 100,
+  "precio_unitario": 10
+}
+```
+
+Resultado esperado:
+
+- La petición debe ser rechazada por validación.
+- `id_tienda` y `cantidad` no deben aceptarse como cadenas.
+- La consulta SQL no debe ejecutarse con esos valores.
+
+### Evidencias recomendadas
+
+Para documentar la validación en el reporte, se recomienda capturar:
+
+- Petición enviada en Postman o Thunder Client.
+- Respuesta HTTP del backend.
+- Código de estado recibido.
+- Logs del contenedor de la API.
+- Consulta o captura de la base de datos demostrando que las tablas siguen intactas.
+
+Comando útil para revisar logs:
+
+```bash
+docker compose logs -f api
+```
+
+### Conclusión de las pruebas
+
+Las pruebas muestran que el backend reduce el riesgo de SQL Injection mediante tres controles principales: validación estricta de entradas con Zod, consultas parametrizadas con `mysql2` y manejo de errores que evita filtrar información sensible en producción. Docker complementa estas medidas al aislar la API y la base de datos en servicios separados, manteniendo MySQL accesible únicamente dentro de la red interna del proyecto.
