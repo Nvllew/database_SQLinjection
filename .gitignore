@@ -1,0 +1,29 @@
+# Archivos del sistema de macOS
+.DS_Store
+
+# Dependencias de Node.js
+node_modules/
+
+# Variables de entorno
+.env
+.env.*
+
+# Archivos de logs
+*.log
+
+# Directorios de compilación
+dist/
+build/
+
+# Archivos temporales
+*.tmp
+*.temp
+
+# Cachés
+.cache/
+.npm/
+.pnpm-store/
+
+# Archivos de IDE
+.vscode/
+.idea/
