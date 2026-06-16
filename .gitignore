@@ -28,3 +28,10 @@ build/
 # Archivos de IDE
 .vscode/
 .idea/
+
+# Variables de entorno
+.env
+.env.*
+
+# Permitir el ejemplo
+!.env.example
