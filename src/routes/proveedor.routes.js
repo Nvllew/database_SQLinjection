@@ -9,6 +9,7 @@ import {
 } from '../controllers/proveedor.controller.js';
 
 import { verifyToken } from '../middlewares/auth.middleware.js';
+import { validateParamId } from '../middlewares/validateParamId.middleware.js';
 
 const router = Router();
 
@@ -23,9 +24,9 @@ router.use(verifyToken);
 router.get('/categorias', getCategorias); 
 
 router.get('/', getAll);
-router.get('/:id', getById);
+router.get('/:id', validateParamId(), getById);
 router.post('/', create);
-router.put('/:id', update);
-router.delete('/:id', remove);
+router.put('/:id', validateParamId(), update);
+router.delete('/:id', validateParamId(), remove);
 
 export default router;

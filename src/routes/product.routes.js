@@ -7,6 +7,7 @@ import {
   remove
 } from '../controllers/product.controller.js';
 import { verifyToken } from '../middlewares/auth.middleware.js';
+import { validateParamId } from '../middlewares/validateParamId.middleware.js';
 
 const router = express.Router();
 
@@ -14,10 +15,10 @@ const router = express.Router();
 router.use(verifyToken);
 
 
-router.get('/', getAll);            
-router.get('/:id', getById);        
-router.post('/', create);           
-router.put('/:id', update);         
-router.delete('/:id', remove);      
+router.get('/', getAll);
+router.get('/:id', validateParamId(), getById);
+router.post('/', create);
+router.put('/:id', validateParamId(), update);
+router.delete('/:id', validateParamId(), remove);
 
 export default router;
