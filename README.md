@@ -431,6 +431,47 @@ docker compose up --build
 
 > `docker compose down -v` elimina los datos actuales de MySQL.
 
+### Carga Automática de Datos de Prueba
+
+El proyecto incluye un script de seed para insertar datos de prueba siguiendo el flujo normal de la aplicación:
+
+- Crea categorías base.
+- Registra una tienda con usuario administrador mediante `registerUser`.
+- Registra un empleado y un invitado asociados al administrador.
+- Crea proveedores, clientes y productos usando los servicios de la aplicación.
+- Genera ventas mediante el flujo transaccional de ventas, validando cliente, stock y productos.
+- Inserta evaluaciones usando el servicio de evaluaciones.
+
+El script está en:
+
+```text
+scripts/seedDemoData.js
+```
+
+Para ejecutarlo con Docker:
+
+```bash
+docker compose exec api node scripts/seedDemoData.js
+```
+
+También existe el script de npm:
+
+```bash
+pnpm seed:demo
+```
+
+> Si se ejecuta fuera de Docker, las variables de conexión deben apuntar a una instancia MySQL accesible desde el host.
+
+Credenciales demo generadas:
+
+| Rol | Correo | Contraseña |
+|---|---|---|
+| Administrador | `admin.demo@scynara.com` | `Demo1234!` |
+| Empleado | `cajero.demo@scynara.com` | `Demo1234!` |
+| Invitado | `invitado.demo@scynara.com` | `Demo1234!` |
+
+El seed es reutilizable: si encuentra usuarios, clientes, proveedores, categorías, productos o evaluaciones ya existentes, los reutiliza en lugar de duplicarlos. En productos, además reabastece inventario mínimo para que las ventas de prueba puedan ejecutarse.
+
 ## Herramientas de Validación y Pruebas
 
 Las siguientes pruebas están pensadas para ejecutarse en entorno local con Docker. También pueden replicarse en Postman o Thunder Client usando el mismo método, URL, encabezados y cuerpo.
